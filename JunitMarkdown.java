@@ -148,7 +148,7 @@ public class JunitMarkdown {
   public static void main(String[] args) throws Exception {
     String rootDir;
     if (args.length != 1) {
-      System.err.println("Usage: ConvertTestResultsToMarkdown <rootDir>");
+      System.err.println("Usage: JunitMarkdown <rootDir>");
       System.exit(1);
       throw new RuntimeException("unreachable");
     } else {
