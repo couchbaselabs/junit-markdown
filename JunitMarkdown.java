@@ -40,6 +40,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class JunitMarkdown {
@@ -199,28 +200,34 @@ public class JunitMarkdown {
 
     for (Path reportFile : files) {
       Document reportDoc = builder.parse(reportFile.toFile());
-      Element testsuite = reportDoc.getDocumentElement();
-      if (!testsuite.getNodeName().equals("testsuite")) {
-        System.err.println("Skipping " + reportFile.getFileName() + " because it is not an XML document with a root named 'testsuite'.");
+      Element root = reportDoc.getDocumentElement();
+      if (!root.getNodeName().equals("testsuite") && !root.getNodeName().equals("testsuites")) {
+        System.err.println("Skipping " + reportFile.getFileName() + " because it is not an XML document with a root named 'testsuite' or 'testsuites'.");
         continue;
       }
 
-      String packageName = getPackage(testsuite.getAttribute("name"));
-      if (packageName.isEmpty()) packageName = "default";
+      List<Element> testsuites = (root.getNodeName().equals("testsuite")) ?
+          List.of(root) :
+          childElements(root, "testsuite").collect(Collectors.toList());
 
-      CountersAndDetails countersAndDetails = packageToCountersAndDetails.computeIfAbsent(packageName, CountersAndDetails::new);
-      countersAndDetails.counters.add(testsuite);
+      for (Element testsuite : testsuites) {
+        String packageName = getPackage(testsuite.getAttribute("name"));
+        if (packageName.isEmpty()) packageName = "default";
 
-      childElements(testsuite, "testcase").forEach(testcase -> {
+        CountersAndDetails countersAndDetails = packageToCountersAndDetails.computeIfAbsent(packageName, CountersAndDetails::new);
+        countersAndDetails.counters.add(testsuite);
 
-        boolean hasInterestingChild = childElements(testcase)
-            .map(Element::getTagName)
-            .anyMatch(interestingTags::contains);
+        childElements(testsuite, "testcase").forEach(testcase -> {
 
-        if (hasInterestingChild) {
-          countersAndDetails.testcases.add(testcase);
-        }
-      });
+          boolean hasInterestingChild = childElements(testcase)
+                  .map(Element::getTagName)
+                  .anyMatch(interestingTags::contains);
+
+          if (hasInterestingChild) {
+            countersAndDetails.testcases.add(testcase);
+          }
+        });
+      }
     }
 
     Counters aggregated = new Counters("aggregated");
