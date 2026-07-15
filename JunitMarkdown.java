@@ -145,15 +145,86 @@ public class JunitMarkdown {
     }
   }
 
+  interface Formatter {
+    String group(Element testsuite);
+
+    String testLabel(String className, String testName);
+
+    static Formatter forName(String name) {
+      switch (name) {
+        case "java": return new JavaFormatter();
+        case "passthrough": return new PassthroughFormatter();
+        default:
+          throw new IllegalArgumentException(
+              "Unknown format: '" + name + "' (expected 'java' or 'passthrough')");
+      }
+    }
+
+    default String classname(Element testsuite) {
+      return childElements(testsuite, "testcase")
+          .map(testcase -> testcase.getAttribute("classname"))
+          .filter(classname -> !classname.isEmpty())
+          .findFirst()
+          .orElse(testsuite.getAttribute("name"));
+    }
+  }
+
+  static class JavaFormatter implements Formatter {
+    @Override
+    public String group(Element testsuite) {
+      // Returns the package name, i.e. the prefix before the last dot in the fully qualified class name.
+      String className = classname(testsuite);
+      int index = className.lastIndexOf('.');
+      return index == -1 ? "" : className.substring(0, index);
+    }
+
+    @Override
+    public String testLabel(String className, String testName) {
+      // Returns the unqualfiied class name, concatenated with the test case name.
+      int index = className.lastIndexOf('.');
+      String simpleName = index == -1 ? className : className.substring(index + 1);
+      return simpleName.isEmpty() ? testName : simpleName + "." + testName;
+    }
+  }
+
+  static class PassthroughFormatter implements Formatter {
+    @Override
+    public String group(Element testsuite) {
+      return classname(testsuite);
+    }
+
+    @Override
+    public String testLabel(String className, String testName) {
+      return testName;
+    }
+  }
+
+  private static RuntimeException usage(String message) {
+    System.err.println(message);
+    System.err.println("Usage: JunitMarkdown [--format=java|passthrough] <rootDir>");
+    System.exit(1);
+    return new RuntimeException("unreachable");
+  }
 
   public static void main(String[] args) throws Exception {
-    String rootDir;
-    if (args.length != 1) {
-      System.err.println("Usage: JunitMarkdown <rootDir>");
-      System.exit(1);
-      throw new RuntimeException("unreachable");
-    } else {
-      rootDir = args[0];
+    String rootDir = null;
+    String format = "java";
+    for (String arg : args) {
+      if (arg.startsWith("--format=")) {
+        format = arg.substring("--format=".length());
+      } else if (rootDir == null) {
+        rootDir = arg;
+      } else {
+        throw usage("Unexpected argument: " + arg);
+      }
+    }
+    if (rootDir == null) throw usage("Missing test-result root directory");
+
+    final Formatter formatter;
+    try {
+      formatter = Formatter.forName(format);
+    } catch (IllegalArgumentException e) {
+      throw usage(e.getMessage());
     }
 
     List<Path> files = new ArrayList<>();
@@ -211,10 +282,10 @@ public class JunitMarkdown {
           childElements(root, "testsuite").collect(Collectors.toList());
 
       for (Element testsuite : testsuites) {
-        String packageName = getPackage(testsuite.getAttribute("name"));
-        if (packageName.isEmpty()) packageName = "default";
+        String groupName = formatter.group(testsuite);
+        if (groupName.isEmpty()) groupName = "default";
 
-        CountersAndDetails countersAndDetails = packageToCountersAndDetails.computeIfAbsent(packageName, CountersAndDetails::new);
+        CountersAndDetails countersAndDetails = packageToCountersAndDetails.computeIfAbsent(groupName, CountersAndDetails::new);
         countersAndDetails.counters.add(testsuite);
 
         childElements(testsuite, "testcase").forEach(testcase -> {
@@ -256,7 +327,7 @@ public class JunitMarkdown {
       System.out.println("## " + counterAndDetails.counters.module);
 
       counterAndDetails.testcases.stream()
-          .map(JunitMarkdown::toMarkdown)
+          .map(testcase -> toMarkdown(testcase, formatter))
           // within each package, show failures before skips
           .sorted(Comparator.comparing((String it) -> it.contains("❌")).reversed())
           .forEach(System.out::println);
@@ -280,18 +351,7 @@ public class JunitMarkdown {
     System.err.println("All tests passed.");
   }
 
-  private static String getPackage(String name) {
-    int index = name.lastIndexOf('.');
-    return index == -1 ? "" : name.substring(0, index);
-  }
-
-  private static String removePackage(String name) {
-    String removeMe = getPackage(name);
-    return removeMe.isEmpty() ? name : name.substring(removeMe.length() + 1);
-  }
-
-
-  static String toMarkdown(Element testcase) {
+  static String toMarkdown(Element testcase, Formatter formatter) {
     String className = testcase.getAttribute("classname");
     String testName = testcase.getAttribute("name");
     double timeSeconds = getDoubleAttr(testcase, "time");
@@ -301,8 +361,7 @@ public class JunitMarkdown {
 
     String headerEmoji = childElements(testcase, "skipped").findAny().isPresent() ? "⏭️" : "❌";
 
-    String classSimpleName = removePackage(className);
-    sb.append("#### ").append(headerEmoji).append("&nbsp;").append(classSimpleName).append(".").append(testName).append("\n");
+    sb.append("#### ").append(headerEmoji).append("&nbsp;").append(formatter.testLabel(className, testName)).append("\n");
 
     childElements(testcase, "skipped").forEach(failure -> appendFailureOrError(sb, failure, timeSeconds));
 
