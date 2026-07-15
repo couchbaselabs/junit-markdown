@@ -388,7 +388,7 @@ public class JunitMarkdown {
           .append("<summary>Stack trace</summary>\n")
           .append("\n")
           .append("```\n")
-          .append(childText.trim()).append("\n")
+          .append(truncate(childText.trim())).append("\n")
           .append("```\n")
           .append("\n")
           .append("</details>\n");
